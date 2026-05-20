@@ -1,7 +1,9 @@
 import hashlib
 import random
 import string
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -69,3 +71,18 @@ def shorten(long_url: str, db: Session = Depends(get_db)) -> dict:
     raise HTTPException(status_code=500, detail="Failed to generate short code after 3 retries")
 
 
+@app.get("/{short_code}")
+def redirect(short_code: str, db: Session = Depends(get_db)):
+    # look up DB, return HTTP 301/302 redirect to original URL
+    # Input validation: reject invalid URLs, malformed codes, and expired links (404)
+    if not short_code.isalnum():
+        raise HTTPException(status_code=400, detail="Malformed short code")
+
+    url = db.query(URL).filter(URL.short_code == short_code).first()
+    if not url:
+        raise HTTPException(status_code=404, detail="URL not found")
+        
+    if url.expires_at and url.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="URL has expired")
+
+    return RedirectResponse(url=url.original_url, status_code=302)
