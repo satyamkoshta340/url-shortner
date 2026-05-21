@@ -1,8 +1,9 @@
 import hashlib
 import random
 import string
+import time
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -32,12 +33,42 @@ def base62_encode(num: int) -> str:
         num //= base
     return "".join(reversed(res))
 
+def check_rate_limit(client_ip: str, endpoint: str, limit: int, window: int = 60):
+    if not client_ip:
+        return
+        
+    redis_client = get_redis_client()
+    current_window = int(time.time() // window)
+    key = f"rate_limit:{endpoint}:{client_ip}:{current_window}"
+    
+    try:
+        count = redis_client.incr(key)
+        if count == 1:
+            redis_client.expire(key, window)
+            
+        if count > limit:
+            next_window_time = (current_window + 1) * window
+            retry_after = next_window_time - int(time.time())
+            raise HTTPException(
+                status_code=429,
+                detail="Too Many Requests",
+                headers={"Retry-After": str(max(retry_after, 1))}
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Fallback if Redis is down
+        pass
+
+
 @app.get("/health")
 def health():
   return {"status": "ok"}
 
 @app.post("/shorten")
-def shorten(long_url: str, db: Session = Depends(get_db)) -> dict:
+def shorten(request: Request, long_url: str, db: Session = Depends(get_db)) -> dict:
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip, "shorten", 10, 60)
     # Implement Base62 encoder (characters 0–9, a–z, A–Z) — this is the core algorithm, understand it deeply
     # Handle collision: if code exists, append a random suffix and retry (max 3 attempts)
     hash_obj = hashlib.md5(long_url.encode())
@@ -73,7 +104,10 @@ def shorten(long_url: str, db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/{short_code}")
-def redirect(short_code: str, db: Session = Depends(get_db)):
+def redirect(request: Request, short_code: str, db: Session = Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip, "redirect", 100, 60)
+
     # look up DB, return HTTP 301/302 redirect to original URL
     # Input validation: reject invalid URLs, malformed codes, and expired links (404)
     if not short_code.isalnum():
