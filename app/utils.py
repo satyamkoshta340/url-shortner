@@ -1,3 +1,4 @@
+import os
 import time
 import string
 from fastapi import HTTPException
@@ -16,6 +17,9 @@ def base62_encode(num: int) -> str:
     return "".join(reversed(res))
 
 def check_rate_limit(client_ip: str, endpoint: str, limit: int, window: int = 60):
+    if os.getenv("DISABLE_RATE_LIMITING") == "true":
+        return
+        
     if not client_ip:
         return
         
