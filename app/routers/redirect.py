@@ -1,17 +1,17 @@
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models.url import URL
 from app.redis import get_redis_client
-from app.utils import check_rate_limit
+from app.utils import check_rate_limit, log_click
 
 router = APIRouter()
 
 @router.get("/{short_code}")
-def redirect(request: Request, short_code: str, db: Session = Depends(get_db)):
+def redirect(request: Request, short_code: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     client_ip = request.client.host if request.client else "unknown"
     check_rate_limit(client_ip, "redirect", 100, 60)
 
@@ -46,5 +46,10 @@ def redirect(request: Request, short_code: str, db: Session = Depends(get_db)):
         redis_client.setex(cache_key, ttl, url.original_url)
     except Exception:
         pass
+
+    # Log click async
+    referrer = request.headers.get("referer")
+    user_agent = request.headers.get("user-agent")
+    background_tasks.add_task(log_click, short_code, referrer, user_agent, None)
 
     return RedirectResponse(url=url.original_url, status_code=302)

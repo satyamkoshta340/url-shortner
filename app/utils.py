@@ -45,3 +45,22 @@ def check_rate_limit(client_ip: str, endpoint: str, limit: int, window: int = 60
     except Exception:
         # Fallback if Redis is down
         pass
+
+def log_click(short_code: str, referrer: str | None, user_agent: str | None, country: str | None):
+    from app.db import SessionLocal
+    from app.models.click import Click
+    
+    db = SessionLocal()
+    try:
+        new_click = Click(
+            short_code=short_code,
+            referrer=referrer,
+            user_agent=user_agent,
+            country=country
+        )
+        db.add(new_click)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
